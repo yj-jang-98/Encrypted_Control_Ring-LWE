@@ -1,1 +1,1 @@
-# YeongjunJang-EncryptedControl-by-CDSL
+# EncControl_RGSW
