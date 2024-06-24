@@ -14,6 +14,8 @@ Two main features are emphasized.
 
 More details on the concept and the proofs can be found in [1].  
 
+---
+
 ### Files
 There are two files. 
 1. `Ring-GSW.go` (without packing. Section 3 of [1])
@@ -31,6 +33,7 @@ go run Ring-GSW_Packed.go
 ```
 on the terminal.
 
+---
 
 ### Set parameters 
 
@@ -56,6 +59,8 @@ consists of integers. More details can be found in Section 5 of [1] or Lemma 1 o
 * `xPlantInit`, `xContInit`: Initial conditions of the plant and the controller
 
 * `tau`: Least power of two greater than the dimensions of the state, output, and input of the controller (Only used in `Ring-GSW_Packed.go`)
+
+---
 
 ### References
 [1] [Y. Jang, J. Lee, S. Min, H. Kwak, J. Kim, and Y. Song, "Ring-LWE based encrypted controller with unlimited number of recursive multiplications and effect of error growth", 2024, arXiv:2406.14372.](https://arxiv.org/abs/2406.14372)
