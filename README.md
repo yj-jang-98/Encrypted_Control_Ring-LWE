@@ -1,6 +1,6 @@
 # Encrypted_Control_Ring-LWE
 
-Code for the methods proposed in the paper [`Ring-LWE based encrypted controller with unlimited number of recursive multiplications and effect of error growth'](https://arxiv.org/abs/2406.14372) by Yeongjun Jang, Joowon Lee, Seonhong Min, Hyesun Kwak, Junsoo Kim, and Yongsoo Song. 
+Code for the methods proposed in the paper ['Ring-LWE based encrypted controller with unlimited number of recursive multiplications and effect of error growth'](https://arxiv.org/abs/2406.14372) by Yeongjun Jang, Joowon Lee, Seonhong Min, Hyesun Kwak, Junsoo Kim, and Yongsoo Song. 
 Implemented in [Lattigo](https://github.com/tuneinsight/lattigo) library.
 
 ---
