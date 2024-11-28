@@ -7,6 +7,9 @@
 // 	"time"
 
 // 	// "reflect"
+// 	"bufio"
+// 	"encoding/csv"
+// 	"strconv"
 
 // 	"github.com/tuneinsight/lattigo/v4/rgsw"
 // 	"github.com/tuneinsight/lattigo/v4/ring"
@@ -19,6 +22,27 @@
 // 	"gonum.org/v1/plot/vg/draw"
 // 	"gonum.org/v1/plot/vg/vgimg"
 // )
+
+// func mat2string(A [][]float64) [][]string {
+// 	Astr := make([][]string, len(A))
+// 	for i := 0; i < len(A); i++ {
+// 		Astr[i] = make([]string, len(A[0]))
+// 		for j := range A[0] {
+// 			Astr[i][j] = strconv.FormatFloat(A[i][j], 'f', -1, 64)
+// 		}
+// 	}
+// 	return Astr
+// }
+
+// func vec2string(A []float64) [][]string {
+// 	Astr := make([][]string, len(A))
+// 	for i := 0; i < len(A); i++ {
+// 		Astr[i] = make([]string, 1)
+// 		Astr[i][0] = strconv.FormatFloat(A[i], 'f', -1, 64)
+// 	}
+// 	return Astr
+// }
+
 
 // func modZq(a [][]float64, params rlwe.Parameters) [][]float64 {
 // 	// Components of the matrix 'a' belongs to [-q/2, q/2)
@@ -286,7 +310,7 @@
 // func main() {
 // 	params, _ := rlwe.NewParametersFromLiteral(rlwe.ParametersLiteral{
 // 		LogN:           11,
-// 		LogQ:           []int{54},
+// 		LogQ:           []int{56},
 // 		Pow2Base:       7,
 // 		DefaultNTTFlag: true,
 // 	})
@@ -299,7 +323,7 @@
 
 // 	// ======== Compute tau!! ========
 // 	// least power of two greater than n, p_, and m
-// 	tau := 8
+// 	tau := 4
 
 // 	// Generate DFS index
 // 	dfsId := make([]int, tau)
@@ -349,34 +373,29 @@
 // 	ringQ := params.RingQ()
 
 // 	// ======== Set Scale factors ========
-// 	s := 1 / 1000.0
-// 	L := 1 / 100000.0
-// 	r := 1 / 1000.0
+// 	s := 1 / 10000.0
+// 	L := 1 / 10000.0
+// 	r := 1 / 10000.0
 
 // 	// ======== Number of iterations ========
-// 	iter := 50
+// 	iter := 1000
 
 // 	// ======== Plant matrices ========
 // 	A := [][]float64{
-// 		{1, 0.0020, 0.0663, 0.0047, 0.0076},
-// 		{0, 1.0077, 2.0328, -0.5496, -0.0591},
-// 		{0, 0.0478, 0.9850, -0.0205, -0.0092},
-// 		{0, 0, 0, 0.3679, 0},
-// 		{0, 0, 0, 0, 0.3679},
+// 		{0.9984, 0, 0.0042, 0},
+// 		{0, 0.9989, 0, -0.0033},
+// 		{0, 0, 0.9958, 0},
+// 		{0, 0, 0, 0.9967},
 // 	}
 // 	B := [][]float64{
-// 		{0.0029, 0.0045},
-// 		{-0.3178, -0.0323},
-// 		{-0.0086, -0.0051},
-// 		{0.6321, 0},
-// 		{0, 0.6321},
+// 		{0.0083, 0},
+// 		{0, 0.0063},
+// 		{0, 0.0048},
+// 		{0.0031, 0},
 // 	}
 // 	C := [][]float64{
-// 		{0, 1, 0, 0, 0},
-// 		{0, -0.2680, 47.7600, -4.5600, 4.4500},
-// 		{1, 0, 0, 0, 0},
-// 		{0, 0, 0, 1, 0},
-// 		{0, 0, 0, 0, 1},
+// 		{0.5, 0, 0, 0},
+// 		{0, 0.5, 0, 0},
 // 	}
 
 // 	// ======== Controller matrices ========
@@ -386,32 +405,29 @@
 // 	// R: n x m
 
 // 	F := [][]float64{ // Must be an integer matrix
-// 		{2, 0, 0, 0, 0},
-// 		{0, -1, 0, 0, 0},
-// 		{0, 0, 1, 0, 0},
-// 		{0, 0, 0, 0, 0},
-// 		{0, 0, 0, 0, 0},
+// 		{-1, 0, 0, 0},
+// 		{0, 0, 0, 0},
+// 		{0, 0, 2, 0},
+// 		{0, 0, 0, 1},
 // 	}
 
 // 	G := [][]float64{
-// 		{0.0816, 0.0047, 1.6504, -0.0931, 0.4047},
-// 		{-1.4165, -0.3163, -0.4329, 0.1405, 0.8263},
-// 		{-1.4979, -0.2089, -0.6394, 0.3682, 0.7396},
-// 		{0.0459, 0.0152, 1.1004, -0.1187, 0.6563},
-// 		{0.0020, 0.0931, 0.0302, -0.0035, 0.0177},
+// 		{0.7160, -0.3828},
+// 		{-0.8131, -1.4790},
+// 		{0.6646, 1.1860},
+// 		{0.0181, -0.0060},
 // 	}
 
 // 	R := [][]float64{
-// 		{-3.5321, 23.1563},
-// 		{-0.5080, -2.3350},
-// 		{2.5496, 0.9680},
-// 		{0.0436, -1.1227},
-// 		{-0.7560, 0.7144},
+// 		{-1.7396, 0.3476},
+// 		{0.2588, 1.3226},
+// 		{0.5115, 2.4668},
+// 		{0.0122, 0.0030},
 // 	}
 
 // 	H := [][]float64{
-// 		{0.0399, -0.3269, -0.2171, 0.0165, -0.0655},
-// 		{-0.0615, -0.0492, -0.0322, -0.0077, -0.0084},
+// 		{-0.8829, 0.0445, -0.0533, -0.0855},
+// 		{0.1791, 0.2180, -0.2738, 0.0180},
 // 	}
 
 // 	// ======== Scale up G, R, and H to integers ========
@@ -422,17 +438,15 @@
 // 	// ======== Plant and Controller initial state ========
 // 	xPlantInit := []float64{
 // 		1,
-// 		-1,
-// 		0,
-// 		0.7,
-// 		2,
+// 		1,
+// 		1,
+// 		1,
 // 	}
 // 	xContInit := []float64{
-// 		-0.001,
-// 		0.013,
-// 		0.2,
-// 		-0.02,
-// 		0,
+// 		0.5,
+// 		0.02,
+// 		-1,
+// 		0.9,
 // 	}
 
 // 	// ======== F,G,H,R RGSW encrpytion ========
@@ -494,6 +508,7 @@
 // 	UOUTENC := [][]float64{}
 // 	XCONTENC := [][]float64{}
 // 	XPLANTENC := [][]float64{}
+// 	TENC := []float64{}
 
 // 	// State initialization
 // 	// Dimension: 1-by-(# of elements)
@@ -504,15 +519,13 @@
 
 // 	startEnc := time.Now()
 // 	for i := 0; i < iter; i++ {
+// 		startEncIter := time.Now()
 // 		// Plant output
 // 		yOut := matVecMult(C, xPlantEnc)
 
 // 		// Quantize and encrypt plant output
 // 		yOutRound := roundVec(scalarVecMult(1/r, yOut))
 // 		ctyOut := encryptRlwe(yOutRound, 1/L, encryptorRLWE, ringQ, params)
-
-// 		// Decrypt plant output just for validation
-// 		valyOut := decryptNewRlwe(ctyOut, decryptorRLWE, r*L, ringQ, params)
 
 // 		// Controller output
 // 		packedCtuOut := externalProduct(ctxCont, ctH, evaluatorRGSW, ringQ, params)
@@ -537,6 +550,10 @@
 // 		ctTmp = ctAdd(ctTmp, ctRu, params)
 // 		ctxCont = unpackPackedCt(ctTmp, n, tau, evaluatorRLWE, ringQ, params)
 
+// 		elapsedEncIter := time.Now().Sub(startEncIter)
+// 		// Decrypt plant output just for validation
+// 		valyOut := decryptNewRlwe(ctyOut, decryptorRLWE, r*L, ringQ, params)
+
 // 		// Decrypt controller state just for validation
 // 		valxCont := decryptNewRlwe(ctxCont, decryptorRLWE, r*s*L, ringQ, params)
 
@@ -545,6 +562,7 @@
 // 		UOUTENC = append(UOUTENC, uOut)
 // 		XCONTENC = append(XCONTENC, valxCont)
 // 		XPLANTENC = append(XPLANTENC, xPlantEnc)
+// 		TENC      = append(TENC, float64(elapsedEncIter.Microseconds()))
 // 	}
 // 	elapsedEnc := time.Now().Sub(startEnc)
 
@@ -555,11 +573,11 @@
 // 	// 	fmt.Printf("Controller output at iter %d: \n %v \n", i, UOUT[i])
 // 	// 	fmt.Printf("Plant state at iter %d: \n %v \n", i, XPLANT[i])
 // 	// 	fmt.Printf("Controller state at iter %d: \n %v \n", i, XCONT[i])
-// 	// 	fmt.Println("=======================")
-// 	// 	fmt.Printf("Decrypted Plant output at iter %d: \n %v \n", i, YOUTENC[i])
-// 	// 	fmt.Printf("Decrypted controller output at iter %d: \n %v \n", i, UOUTENC[i])
-// 	// 	fmt.Printf("Decrypted Plant state at iter %d: \n %v \n", i, XPLANTENC[i])
-// 	// 	fmt.Printf("Decrypted controller state at iter %d: \n %v \n", i, XCONTENC[i])
+// 	// 	// fmt.Println("=======================")
+// 	// 	// fmt.Printf("Decrypted Plant output at iter %d: \n %v \n", i, YOUTENC[i])
+// 	// 	// fmt.Printf("Decrypted controller output at iter %d: \n %v \n", i, UOUTENC[i])
+// 	// 	// fmt.Printf("Decrypted Plant state at iter %d: \n %v \n", i, XPLANTENC[i])
+// 	// 	// fmt.Printf("Decrypted controller state at iter %d: \n %v \n", i, XCONTENC[i])
 // 	// }
 
 // 	// ======== Simulation result ========
@@ -659,4 +677,30 @@
 // 	if _, err := png.WriteTo(w); err != nil {
 // 		panic(err)
 // 	}
+
+// 	// Export data ===============================================================
+
+// 	fileUOUT, err := os.Create("./uUnenc.csv")
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// 	wrUOUT := csv.NewWriter(bufio.NewWriter(fileUOUT))
+// 	UOUTstr := mat2string(UOUT)
+// 	wrUOUT.WriteAll(UOUTstr)
+
+// 	fileUOUTENC, err := os.Create("./uEnc.csv")
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// 	wrUOUTENC := csv.NewWriter(bufio.NewWriter(fileUOUTENC))
+// 	UOUTENCstr := mat2string(UOUTENC)
+// 	wrUOUTENC.WriteAll(UOUTENCstr)
+
+// 	fileTENC, err := os.Create("./TEncPackLarge.csv")
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// 	wrTENC := csv.NewWriter(bufio.NewWriter(fileTENC))
+// 	TENCstr := vec2string(TENC)
+// 	wrTENC.WriteAll(TENCstr)
 // }

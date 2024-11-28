@@ -47,83 +47,143 @@ func modZqVec(a []float64, params rlwe.Parameters) []float64 {
 	return b
 }
 
-func externalProduct(ctB []*rlwe.Ciphertext, ctA [][]*rgsw.Ciphertext, evaluator *rgsw.Evaluator, ringQ *ring.Ring, params rlwe.Parameters) []*rlwe.Ciphertext {
+func externalProduct(ctB []*rlwe.Ciphertext, ctA []*rgsw.Ciphertext, evaluatorRGSW *rgsw.Evaluator, ringQ *ring.Ring, params rlwe.Parameters) *rlwe.Ciphertext {
 	// Computes the external product between ctA and ctB
-	// ctA: m x n RGSW ciphertexts matrix
-	// ctB: n x l RLWE ciphertexts vector
-	// ctC: m x l RLWE ciphertexts vector
+	// ctA: n-dimensional RLWE ciphertexts vector
+	//// Each element is an RLWE encryption of each elements of vector A
+	// ctB: n-dimensional RGSW ciphertexts vector
+	//// Each element is an RGSW encryption of each columns of matrix B
+	// ctC: 1-dimensional RLWE (packed) ciphertext
 
-	row := len(ctA)    // m
-	col := len(ctA[0]) // n
-	ctC := make([]*rlwe.Ciphertext, row)
+	row := len(ctA)
+	packedCtC := rlwe.NewCiphertext(params, ctB[0].Degree(), ctB[0].Level())
 	tmpCt := rlwe.NewCiphertext(params, ctB[0].Degree(), ctB[0].Level())
-	for r := 0; r < row; r++ {
-		ctC[r] = rlwe.NewCiphertext(params, ctB[0].Degree(), ctB[0].Level())
-		for c := 0; c < col; c++ {
-			evaluator.ExternalProduct(ctB[c], ctA[r][c], tmpCt)
-			ringQ.Add(ctC[r].Value[0], tmpCt.Value[0], ctC[r].Value[0])
-			ringQ.Add(ctC[r].Value[1], tmpCt.Value[1], ctC[r].Value[1])
-		}
+	for i := 0; i < row; i++ {
+		evaluatorRGSW.ExternalProduct(ctB[i], ctA[i], tmpCt)
+		ringQ.Add(packedCtC.Value[0], tmpCt.Value[0], packedCtC.Value[0])
+		ringQ.Add(packedCtC.Value[1], tmpCt.Value[1], packedCtC.Value[1])
 	}
-	return ctC
+
+	return packedCtC
 }
 
-func encryptRlwe(A []float64, scale float64, encryptor rlwe.Encryptor, params rlwe.Parameters) []*rlwe.Ciphertext {
+func unpackPackedCt(packedCtC *rlwe.Ciphertext, n int, tau int, evaluatorRLWE *rlwe.Evaluator, ringQ *ring.Ring, params rlwe.Parameters) []*rlwe.Ciphertext {
+	// Unpacks a packed ciphertext and returns an n-dimensional RLWE ciphertexts vector
+
+	scalar := params.Q()[0] - uint64((params.Q()[0]+1)/uint64(tau))
+	ctUnpack := make([]*rlwe.Ciphertext, tau)
+	ctOut := make([]*rlwe.Ciphertext, n)
+	for i := 0; i < tau; i++ {
+		ctUnpack[i] = rlwe.NewCiphertext(params, packedCtC.Degree(), packedCtC.Level())
+	}
+	tmpCt := rlwe.NewCiphertext(params, packedCtC.Degree(), packedCtC.Level())
+
+	// Scaling
+	ringQ.MulScalar(packedCtC.Value[0], scalar, packedCtC.Value[0])
+	ringQ.MulScalar(packedCtC.Value[1], scalar, packedCtC.Value[1])
+
+	ctUnpack[0] = packedCtC
+
+	for i := tau; i > 1; i /= 2 {
+		for j := 0; j < tau; j += i {
+			evaluatorRLWE.Automorphism(ctUnpack[j], uint64(i+1), tmpCt)
+
+			ringQ.Sub(tmpCt.Value[0], ctUnpack[j].Value[0], ctUnpack[i/2+j].Value[0])
+			ringQ.Sub(tmpCt.Value[1], ctUnpack[j].Value[1], ctUnpack[i/2+j].Value[1])
+
+			ringQ.Add(ctUnpack[j].Value[0], tmpCt.Value[0], ctUnpack[j].Value[0])
+			ringQ.Add(ctUnpack[j].Value[1], tmpCt.Value[1], ctUnpack[j].Value[1])
+
+			ringQ.InvNTT(ctUnpack[i/2+j].Value[0], ctUnpack[i/2+j].Value[0])
+			ringQ.InvNTT(ctUnpack[i/2+j].Value[1], ctUnpack[i/2+j].Value[1])
+
+			ringQ.MultByMonomial(ctUnpack[i/2+j].Value[0], params.N()-params.N()/i, ctUnpack[i/2+j].Value[0])
+			ringQ.MultByMonomial(ctUnpack[i/2+j].Value[1], params.N()-params.N()/i, ctUnpack[i/2+j].Value[1])
+
+			ringQ.NTT(ctUnpack[i/2+j].Value[0], ctUnpack[i/2+j].Value[0])
+			ringQ.NTT(ctUnpack[i/2+j].Value[1], ctUnpack[i/2+j].Value[1])
+		}
+	}
+
+	// Bit reverse
+	j := 0
+	for i := 1; i < tau; i += 1 {
+		bit := tau >> 1
+		for j >= bit {
+			j -= bit
+			bit >>= 1
+		}
+		j += bit
+		if i < j {
+			ctUnpack[i], ctUnpack[j] = ctUnpack[j], ctUnpack[i]
+		}
+	}
+
+	// Takes the first n ciphertexts
+	for j := 0; j < n; j += 1 {
+		ctOut[j] = ctUnpack[j].CopyNew()
+	}
+
+	return ctOut
+}
+
+func encryptRlwe(A []float64, scale float64, encryptorRLWE rlwe.Encryptor, ringQ *ring.Ring, params rlwe.Parameters) []*rlwe.Ciphertext {
 	// Encrypts an n-dimensional float vector A into an n-dimensional RLWE ciphertexts vector ctA after scaling
 
 	row := len(A)
 	ctA := make([]*rlwe.Ciphertext, row)
-
-	// Scale up. Scale should be chosen so that A_ is a vector consisting of integers in [-q/2, q/2)
 	A_ := scalarVecMult(scale, A)
-
 	modA := modZqVec(A_, params)
 	for r := 0; r < row; r++ {
 		pt := rlwe.NewPlaintext(params, params.MaxLevel())
-		for i := 0; i < params.N(); i++ {
-			pt.Value.Coeffs[0][i] = uint64(modA[r])
-		}
-		ctA[r] = encryptor.EncryptNew(pt)
+		pt.Value.Coeffs[0][0] = uint64(modA[r])
+		ringQ.NTT(pt.Value, pt.Value)
+		ctA[r] = encryptorRLWE.EncryptNew(pt)
 	}
 
 	return ctA
 }
 
-func encryptRgsw(A [][]float64, encryptor *rgsw.Encryptor, levelQ int, levelP int, decompRNS int, decompPw2 int, ringQP *ringqp.Ring, params rlwe.Parameters) [][]*rgsw.Ciphertext {
-	// Encrypts an m-by-n-dimensional float matrix A into an m-by-n-dimensional RGSW ciphertexts matrix ctA
+func encryptRgsw(A [][]float64, tau int, encryptorRGSW *rgsw.Encryptor, levelQ int, levelP int, decompRNS int, decompPw2 int, ringQ *ring.Ring, ringQP *ringqp.Ring, params rlwe.Parameters) []*rgsw.Ciphertext {
+	// Encrypts an m-by-n-dimensional float matrix A into an n-dimensional RGSW ciphertexts vector ctA
 
 	row := len(A)
 	col := len(A[0])
-	ctA := make([][]*rgsw.Ciphertext, row)
+	ctA := make([]*rgsw.Ciphertext, col)
 	modA := modZq(A, params)
-	for r := 0; r < row; r++ {
-		ctA[r] = make([]*rgsw.Ciphertext, col)
-		for c := 0; c < col; c++ {
-			pt := rlwe.NewPlaintext(params, params.MaxLevel())
-			for i := 0; i < params.N(); i++ {
-				pt.Value.Coeffs[0][i] = uint64(modA[r][c])
+	for c := 0; c < col; c++ {
+		pt := rlwe.NewPlaintext(params, params.MaxLevel())
+		for j := 0; j < tau; j++ {
+			if j < row {
+				// Store in the packing slots
+				pt.Value.Coeffs[0][params.N()*j/tau] = uint64(modA[j][c])
+			} else {
+				pt.Value.Coeffs[0][params.N()*j/tau] = uint64(0)
 			}
-
-			ctA[r][c] = rgsw.NewCiphertext(levelQ, levelP, decompRNS, decompPw2, *ringQP)
-			encryptor.Encrypt(pt, ctA[r][c])
 		}
+		ringQ.NTT(pt.Value, pt.Value)
+		ctA[c] = rgsw.NewCiphertext(levelQ, levelP, decompRNS, decompPw2, *ringQP)
+		encryptorRGSW.Encrypt(pt, ctA[c])
 	}
 	return ctA
 }
 
-func decryptRlwe(ctA []*rlwe.Ciphertext, decryptor rlwe.Decryptor, scale float64, params rlwe.Parameters) []float64 {
+func decryptNewRlwe(ctA []*rlwe.Ciphertext, decryptorRLWE rlwe.Decryptor, scale float64, ringQ *ring.Ring, params rlwe.Parameters) []float64 {
 	// 1) Decrypts an n-dimensional RLWE vector ctA and obtain an n-dimensional integer vector pt
 	// 2) Maps the constant terms of pt from the set [0,q/2) back to [-q/2, q/2)
 	// 3) Scale down and return decA
 
 	row := len(ctA)
 	q := float64(params.Q()[0])
+	offset := uint64(q / (scale * 2.0))
 	decA := make([]float64, row)
 	for r := 0; r < row; r++ {
-		pt := decryptor.DecryptNew(ctA[r])
+		ringQ.AddScalar(ctA[r].Value[0], offset, ctA[r].Value[0])
+		pt := decryptorRLWE.DecryptNew(ctA[r])
 		if pt.IsNTT {
 			params.RingQ().InvNTT(pt.Value, pt.Value)
 		}
+		ringQ.SubScalar(ctA[r].Value[0], offset, ctA[r].Value[0])
 		// Constant terms
 		val := float64(pt.Value.Coeffs[0][0])
 		// Mapping to [-q/2, q/2)
@@ -134,18 +194,48 @@ func decryptRlwe(ctA []*rlwe.Ciphertext, decryptor rlwe.Decryptor, scale float64
 	return decA
 }
 
-func ctAdd(ctA []*rlwe.Ciphertext, ctB []*rlwe.Ciphertext, params rlwe.Parameters) []*rlwe.Ciphertext {
-	// Adds two m-dimensional RLWE ciphertexts vector ctA and ctB
+func matVecMult(A [][]float64, B []float64) []float64 {
+	// A : m x n
+	// B : n x l
+	m := len(A)
+	n := len(A[0])
+	n1 := len(B)
+
+	if n != n1 {
+		panic(fmt.Errorf("Matrix dimension don't match"))
+	}
+
+	C := make([]float64, m)
+
+	for i := 0; i < m; i++ {
+		tmp := 0.0
+		for k := 0; k < n; k++ {
+			tmp = tmp + A[i][k]*B[k]
+		}
+		C[i] = tmp
+	}
+	return C
+}
+
+func vecAdd(A []float64, B []float64) []float64 {
 	// A : m x 1
 	// B : m x 1
+	m := len(A)
+	C := make([]float64, m)
 
-	row := len(ctA)
-	ctC := make([]*rlwe.Ciphertext, row)
-	for r := 0; r < row; r++ {
-		ctC[r] = rlwe.NewCiphertext(params, ctB[0].Degree(), ctB[0].Level())
-		params.RingQ().Add(ctA[r].Value[0], ctB[r].Value[0], ctC[r].Value[0])
-		params.RingQ().Add(ctA[r].Value[1], ctB[r].Value[1], ctC[r].Value[1])
+	for i := 0; i < m; i++ {
+		C[i] = A[i] + B[i]
 	}
+	return C
+}
+
+func ctAdd(ctA *rlwe.Ciphertext, ctB *rlwe.Ciphertext, params rlwe.Parameters) *rlwe.Ciphertext {
+	// A : m x n
+	// B : m x n
+	ctC := rlwe.NewCiphertext(params, ctB.Degree(), ctB.Level())
+
+	params.RingQ().Add(ctA.Value[0], ctB.Value[0], ctC.Value[0])
+	params.RingQ().Add(ctA.Value[1], ctB.Value[1], ctC.Value[1])
 
 	return ctC
 }
@@ -193,47 +283,10 @@ func roundVec(M []float64) []float64 {
 	return C
 }
 
-func matVecMult(A [][]float64, B []float64) []float64 {
-	// A : m x n
-	// B : n x l
-
-	m := len(A)
-	n := len(A[0])
-	n1 := len(B)
-
-	if n != n1 {
-		panic(fmt.Errorf("Matrix dimension don't match"))
-	}
-
-	C := make([]float64, m)
-
-	for i := 0; i < m; i++ {
-		tmp := 0.0
-		for k := 0; k < n; k++ {
-			tmp = tmp + A[i][k]*B[k]
-		}
-		C[i] = tmp
-	}
-	return C
-}
-
-func vecAdd(A []float64, B []float64) []float64 {
-	// A : m x 1
-	// B : m x 1
-
-	m := len(A)
-	C := make([]float64, m)
-
-	for i := 0; i < m; i++ {
-		C[i] = A[i] + B[i]
-	}
-	return C
-}
-
 func main() {
 	params, _ := rlwe.NewParametersFromLiteral(rlwe.ParametersLiteral{
 		LogN:           11,
-		LogQ:           []int{54},
+		LogQ:           []int{56},
 		Pow2Base:       7,
 		DefaultNTTFlag: true,
 	})
@@ -243,12 +296,50 @@ func main() {
 	kgen := rlwe.NewKeyGenerator(params)
 	sk := kgen.GenSecretKey()
 	rlk := kgen.GenRelinearizationKey(sk, 1)
-	evk := &rlwe.EvaluationKey{Rlk: rlk}
+
+	// ======== Compute tau!! ========
+	// least power of two greater than n, p_, and m
+	tau := 8
+
+	// Generate DFS index
+	dfsId := make([]int, tau)
+	for i := 0; i < tau; i++ {
+		dfsId[i] = i
+	}
+
+	tmp := make([]int, tau)
+	for i := 1; i < tau; i *= 2 {
+		id := 0
+		currBlock := tau / i
+		nextBlock := currBlock / 2
+		for j := 0; j < i; j++ {
+			for k := 0; k < nextBlock; k++ {
+				tmp[id] = dfsId[j*currBlock+2*k]
+				tmp[nextBlock+id] = dfsId[j*currBlock+2*k+1]
+				id++
+			}
+			id += nextBlock
+		}
+
+		for j := 0; j < tau; j++ {
+			dfsId[j] = tmp[j]
+		}
+	}
+
+	galEls := make([]uint64, int(math.Log2(float64(tau))))
+	for i := 0; i < int(math.Log2(float64(tau))); i++ {
+		galEls[i] = uint64(tau/int(math.Pow(2, float64(i))) + 1)
+	}
+	rotkey := kgen.GenRotationKeys(galEls, sk)
+
+	evkRGSW := &rlwe.EvaluationKey{Rlk: rlk}
+	evkRLWE := &rlwe.EvaluationKey{Rlk: rlk, Rtks: rotkey}
 
 	encryptorRLWE := rlwe.NewEncryptor(params, sk)
 	decryptorRLWE := rlwe.NewDecryptor(params, sk)
 	encryptorRGSW := rgsw.NewEncryptor(params, sk)
-	evaluator := rgsw.NewEvaluator(params, evk)
+	evaluatorRGSW := rgsw.NewEvaluator(params, evkRGSW)
+	evaluatorRLWE := rlwe.NewEvaluator(params, evkRLWE)
 
 	levelQ := params.QCount() - 1
 	levelP := params.PCount() - 1
@@ -258,9 +349,9 @@ func main() {
 	ringQ := params.RingQ()
 
 	// ======== Set Scale factors ========
-	s := 1 / 1000.0
-	L := 1 / 1000000.0
-	r := 1 / 1000.0
+	s := 1 / 10000.0
+	L := 1 / 10000.0
+	r := 1 / 10000.0
 
 	// ======== Number of iterations ========
 	iter := 50
@@ -352,10 +443,11 @@ func main() {
 	fmt.Printf("p_ \n %d \n", p_)
 	fmt.Printf("m \n %d \n", m)
 
-	ctF := encryptRgsw(F, encryptorRGSW, levelQ, levelP, decompRNS, decompPw2, ringQP, params)
-	ctG := encryptRgsw(Gbar, encryptorRGSW, levelQ, levelP, decompRNS, decompPw2, ringQP, params)
-	ctH := encryptRgsw(Hbar, encryptorRGSW, levelQ, levelP, decompRNS, decompPw2, ringQP, params)
-	ctR := encryptRgsw(Rbar, encryptorRGSW, levelQ, levelP, decompRNS, decompPw2, ringQP, params)
+	// Dimension: 1-by-(# of columns)
+	ctF := encryptRgsw(F, tau, encryptorRGSW, levelQ, levelP, decompRNS, decompPw2, ringQ, ringQP, params)
+	ctG := encryptRgsw(Gbar, tau, encryptorRGSW, levelQ, levelP, decompRNS, decompPw2, ringQ, ringQP, params)
+	ctH := encryptRgsw(Hbar, tau, encryptorRGSW, levelQ, levelP, decompRNS, decompPw2, ringQ, ringQP, params)
+	ctR := encryptRgsw(Rbar, tau, encryptorRGSW, levelQ, levelP, decompRNS, decompPw2, ringQ, ringQP, params)
 
 	// ======== Run closed-loop without encryption ========
 	fmt.Println("Nominal Loop Start")
@@ -390,6 +482,7 @@ func main() {
 		UOUT = append(UOUT, uOut)
 		XCONT = append(XCONT, xContUnenc)
 		XPLANT = append(XPLANT, xPlantUnenc)
+
 	}
 	elapsedUnenc := time.Now().Sub(startUnenc)
 
@@ -403,9 +496,11 @@ func main() {
 	XPLANTENC := [][]float64{}
 
 	// State initialization
+	// Dimension: 1-by-(# of elements)
 	xPlantEnc := xPlantInit
 	xContEnc := scalarVecMult(1/(r*s), xContInit)
-	ctxCont := encryptRlwe(xContEnc, 1/L, encryptorRLWE, params)
+	ctxCont := encryptRlwe(xContEnc, 1/L, encryptorRLWE, ringQ, params)
+	ctTmp := rlwe.NewCiphertext(params, ctxCont[0].Degree(), ctxCont[0].Level())
 
 	startEnc := time.Now()
 	for i := 0; i < iter; i++ {
@@ -414,32 +509,36 @@ func main() {
 
 		// Quantize and encrypt plant output
 		yOutRound := roundVec(scalarVecMult(1/r, yOut))
-		ctyOut := encryptRlwe(yOutRound, 1/L, encryptorRLWE, params)
+		ctyOut := encryptRlwe(yOutRound, 1/L, encryptorRLWE, ringQ, params)
 
 		// Decrypt plant output just for validation
-		valyOut := decryptRlwe(ctyOut, decryptorRLWE, r*L, params)
+		valyOut := decryptNewRlwe(ctyOut, decryptorRLWE, r*L, ringQ, params)
 
 		// Controller output
-		ctuOut := externalProduct(ctxCont, ctH, evaluator, ringQ, params)
+		packedCtuOut := externalProduct(ctxCont, ctH, evaluatorRGSW, ringQ, params)
+
+		// Unpack controller output
+		unpackedCtuOut := unpackPackedCt(packedCtuOut, m, tau, evaluatorRLWE, ringQ, params)
 
 		// Decrypt controller output and construct plant input
-		uOut := decryptRlwe(ctuOut, decryptorRLWE, r*s*s*L, params)
+		uOut := decryptNewRlwe(unpackedCtuOut, decryptorRLWE, r*s*s*L, ringQ, params)
 
 		// Re-encrypt controller output
-		ctuReEnc := encryptRlwe(uOut, 1/(r*L), encryptorRLWE, params)
+		ctuReEnc := encryptRlwe(uOut, 1/(r*L), encryptorRLWE, ringQ, params)
 
 		// Plant state update
 		xPlantEnc = vecAdd(matVecMult(A, xPlantEnc), matVecMult(B, uOut))
 
 		// Controller state update
-		ctFx := externalProduct(ctxCont, ctF, evaluator, ringQ, params)
-		ctGy := externalProduct(ctyOut, ctG, evaluator, ringQ, params)
-		ctRu := externalProduct(ctuReEnc, ctR, evaluator, ringQ, params)
-		ctxCont = ctAdd(ctFx, ctGy, params)
-		ctxCont = ctAdd(ctxCont, ctRu, params)
+		ctFx := externalProduct(ctxCont, ctF, evaluatorRGSW, ringQ, params)
+		ctGy := externalProduct(ctyOut, ctG, evaluatorRGSW, ringQ, params)
+		ctRu := externalProduct(ctuReEnc, ctR, evaluatorRGSW, ringQ, params)
+		ctTmp = ctAdd(ctFx, ctGy, params)
+		ctTmp = ctAdd(ctTmp, ctRu, params)
+		ctxCont = unpackPackedCt(ctTmp, n, tau, evaluatorRLWE, ringQ, params)
 
 		// Decrypt controller state just for validation
-		valxCont := decryptRlwe(ctxCont, decryptorRLWE, r*s*L, params)
+		valxCont := decryptNewRlwe(ctxCont, decryptorRLWE, r*s*L, ringQ, params)
 
 		// Append data
 		YOUTENC = append(YOUTENC, valyOut)
